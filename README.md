@@ -2,8 +2,6 @@
 
 ## O problema que isso resolve
 
-## O problema que isso resolve
-
 No ecossistema Java, migrations sempre foram dolorosas:
 
 - **Flyway** → você escreve `.sql` na mão
@@ -11,8 +9,6 @@ No ecossistema Java, migrations sempre foram dolorosas:
 - **ddl-auto=update** → funciona em dev, perigoso em produção
 
 O `javel-migration` traz a experiência do Laravel para o Java. Você escreve uma classe com `up()` e `down()`, e o runner cuida do resto — sem SQL na mão, sem arquivo externo, tudo em Java puro.
-
-## Instalação
 
 ## Instalação
 
@@ -25,8 +21,6 @@ Adicione no seu `pom.xml`:
   <version>1.0.0</version>
 </dependency>
 ```
-
-## Criando uma migration
 
 ## Criando uma migration
 
@@ -91,8 +85,6 @@ schema.renameColumn("users", "phone", "telephone");
 
 ## TableBuilder — tipos de coluna
 
-## TableBuilder — tipos de coluna
-
 ```java
 table.id();                           // BIGINT PRIMARY KEY AUTO_INCREMENT
 table.string("name");                 // VARCHAR(255) NOT NULL
@@ -111,8 +103,6 @@ table.string("email").unique();          // UNIQUE
 table.string("phone").nullable();        // remove NOT NULL
 table.integer("age").defaultValue("18"); // DEFAULT 18
 ```
-
-## Registrando e rodando
 
 ## Registrando e rodando
 
@@ -148,7 +138,6 @@ spring.jpa.hibernate.ddl-auto=none
 
 ## Comportamento do runner
 
-## Comportamento do runner
 
 O `MigrationRunner` é inteligente — não roda o que já rodou:
 
@@ -181,8 +170,6 @@ Você não precisa criar essa tabela — ela é gerada automaticamente na primei
 
 ## Bancos suportados
 
-## Bancos suportados
-
 | Banco | Suporte |
 | --- | --- |
 | H2 (in-memory) | ✅ |
@@ -192,7 +179,6 @@ Você não precisa criar essa tabela — ela é gerada automaticamente na primei
 
 ## Filosofia
 
-## Filosofia
 
 O `javel-migration` nasceu de uma pergunta simples:
 
