@@ -1,13 +1,17 @@
-package com.javel.migration;
-
+package com.javel;
 import java.util.function.Consumer;
 
 public class Schema {
 
     private String sql = "";
+    private TableBuilder.Dialect dialect = TableBuilder.Dialect.H2;
+
+    public void setDialect(TableBuilder.Dialect dialect) {
+        this.dialect = dialect;
+    }
 
     public void create(String table, Consumer<TableBuilder> callback) {
-        TableBuilder builder = new TableBuilder(table);
+        TableBuilder builder = new TableBuilder(table, dialect);
         callback.accept(builder);
         this.sql = builder.toSQL();
     }
@@ -17,9 +21,8 @@ public class Schema {
     }
 
     public void addColumn(String table, Consumer<TableBuilder> callback) {
-        TableBuilder builder = new TableBuilder(table);
+        TableBuilder builder = new TableBuilder(table, dialect);
         callback.accept(builder);
-        // pega só a última coluna definida
         String colSQL = builder.toSQL()
                 .replaceAll("CREATE TABLE .*?\\(\n  ", "")
                 .replaceAll("\n\\);", "");

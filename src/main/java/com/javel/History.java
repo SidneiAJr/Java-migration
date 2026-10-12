@@ -1,4 +1,4 @@
-package com.javel.migration;
+package com.javel;
 
 import java.util.List;
 

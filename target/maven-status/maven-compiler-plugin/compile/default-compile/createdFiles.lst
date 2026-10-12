@@ -1,0 +1,11 @@
+com\javel\CreatePostsTable.class
+com\javel\MigrationCLI.class
+com\javel\MigrationCLI$SimpleDataSource.class
+com\javel\MigrationRunner.class
+com\javel\TableBuilder.class
+com\javel\History.class
+com\javel\Schema.class
+com\javel\Migration.class
+com\javel\TableBuilder$Dialect.class
+com\javel\Main.class
+com\javel\CreateUsersTable.class

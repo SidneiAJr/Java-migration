@@ -1,4 +1,4 @@
-package com.javel.migration;
+package com.javel;
 
 public abstract class Migration {
 

@@ -1,5 +1,4 @@
-package com.javel.migration;
-
+package com.javel;
 import javax.sql.DataSource;
 import java.sql.*;
 import java.util.*;
@@ -15,6 +14,7 @@ public class MigrationRunner {
     }
 
     public void run() throws SQLException {
+        TableBuilder.Dialect dialect = detectDialect();
         ensureHistoryTable();
 
         for (Migration migration : migrations) {
@@ -27,7 +27,6 @@ public class MigrationRunner {
 
             System.out.println("\n▶  Running " + version);
 
-            // printa o history da migration
             History history = migration.history();
             if (!history.isEmpty()) {
                 System.out.println("   📋 History:");
@@ -35,6 +34,7 @@ public class MigrationRunner {
             }
 
             Schema schema = new Schema();
+            schema.setDialect(dialect);
             migration.up(schema);
 
             execute(schema.getSQL());
@@ -45,9 +45,10 @@ public class MigrationRunner {
     }
 
     public void rollback() throws SQLException {
+        TableBuilder.Dialect dialect = detectDialect();
+
         if (migrations.isEmpty()) return;
 
-        // pega a última migration executada
         String last = getLastRan();
         if (last == null) {
             System.out.println("⚠  Nada pra reverter.");
@@ -64,6 +65,7 @@ public class MigrationRunner {
         System.out.println("\n▶  Rolling back " + last);
 
         Schema schema = new Schema();
+        schema.setDialect(dialect);
         migration.down(schema);
 
         execute(schema.getSQL());
@@ -73,6 +75,15 @@ public class MigrationRunner {
     }
 
     // ---- privados ----
+
+    private TableBuilder.Dialect detectDialect() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            String url = conn.getMetaData().getURL().toLowerCase();
+            if (url.contains("mysql"))      return TableBuilder.Dialect.MYSQL;
+            if (url.contains("postgresql")) return TableBuilder.Dialect.POSTGRESQL;
+            return TableBuilder.Dialect.H2;
+        }
+    }
 
     private void ensureHistoryTable() throws SQLException {
         String sql = """
