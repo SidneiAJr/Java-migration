@@ -47,8 +47,8 @@ public class CreateUsersTable extends Migration {
     @Override
     public History history() {
         return History.of(
-            "2026-10-12 - Pedro - Criou tabela users",
-            "2026-10-13 - Pedro - Adicionou campo email"
+            "2026-10-12 - Testador - Criou tabela users",
+            "2026-10-13 - Testador - Adicionou campo email"
         );
     }
 }
@@ -59,8 +59,6 @@ public class CreateUsersTable extends Migration {
 | `up()` | ✅ Sim | Define o que criar/alterar |
 | `down()` | ✅ Sim | Define como desfazer |
 | `history()` | ❌ Opcional | Log de alterações da migration |
-
-## Schema — métodos disponíveis
 
 ## Schema — métodos disponíveis
 
