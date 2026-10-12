@@ -18,7 +18,7 @@ Adicione no seu `pom.xml`:
 <dependency>
   <groupId>com.javel</groupId>
   <artifactId>javel-migration</artifactId>
-  <version>1.0.0</version>
+  <version>0.0.1</version>
 </dependency>
 ```
 
