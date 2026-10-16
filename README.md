@@ -1,5 +1,10 @@
 # javel-migration 🚀
 
+![license](https://img.shields.io/github/license/seu-usuario/javel-migration)
+![java](https://img.shields.io/badge/java-%3E%3D17-orange)
+![maven](https://img.shields.io/badge/maven-%3E%3D3.8-blue)
+![version](https://img.shields.io/badge/version-0.0.1-brightgreen)
+
 ## O problema que isso resolve
 
 No ecossistema Java, migrations sempre foram dolorosas:
@@ -47,8 +52,7 @@ public class CreateUsersTable extends Migration {
     @Override
     public History history() {
         return History.of(
-            "2026-10-12 - Testador - Criou tabela users",
-            "2026-10-13 - Testador - Adicionou campo email"
+            "2026-10-12 - Albertão - Criou tabela users"
         );
     }
 }
@@ -87,55 +91,31 @@ schema.renameColumn("users", "phone", "telephone");
 table.id();                           // BIGINT PRIMARY KEY AUTO_INCREMENT
 table.string("name");                 // VARCHAR(255) NOT NULL
 table.text("bio");                    // TEXT
-table.integer("age");                // INT NOT NULL
-table.bigInteger("views");           // BIGINT NOT NULL
-table.bool("active");                // BOOLEAN DEFAULT FALSE
-table.decimal("price", 10, 2);       // DECIMAL(10,2) NOT NULL
+table.integer("age");                 // INT NOT NULL
+table.bigInteger("views");            // BIGINT NOT NULL
+table.bool("active");                 // BOOLEAN NOT NULL DEFAULT FALSE
+table.decimal("price", 10, 2);        // DECIMAL(10,2) NOT NULL
 table.timestamps();                   // created_at + updated_at
 ```
 
 **Modificadores encadeáveis:**
 
 ```java
-table.string("email").unique();          // UNIQUE
-table.string("phone").nullable();        // remove NOT NULL
-table.integer("age").defaultValue("18"); // DEFAULT 18
+table.string("email").unique();           // UNIQUE
+table.string("phone").nullable();         // remove NOT NULL
+table.integer("age").defaultValue("18");  // DEFAULT 18
 ```
 
-## Registrando e rodando
+## Bancos suportados
 
-No Spring Boot, configure uma vez e esqueça:
-
-```java
-@Configuration
-public class JavelConfig {
-
-    @Bean
-    public MigrationRunner migrationRunner(DataSource dataSource) {
-        return new MigrationRunner(dataSource, List.of(
-            new CreateUsersTable(),
-            new CreatePostsTable()
-            // adicione novas migrations aqui, em ordem
-        ));
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void migrate() throws SQLException {
-        migrationRunner(null).run();
-    }
-}
-```
-
-Desative o `ddl-auto` do Hibernate no `application.properties`:
-
-```properties
-spring.jpa.hibernate.ddl-auto=none
-```
-
-> ⚠️ Com o javel-migration no controle, o Hibernate só faz queries — quem cuida da estrutura do banco é o runner.
+| Banco | Suporte |
+| --- | --- |
+| H2 (in-memory) | ✅ |
+| MySQL | ✅ |
+| PostgreSQL | ✅ |
+| MariaDB | ✅ |
 
 ## Comportamento do runner
-
 
 O `MigrationRunner` é inteligente — não roda o que já rodou:
 
@@ -143,7 +123,7 @@ O `MigrationRunner` é inteligente — não roda o que já rodou:
 === RODANDO MIGRATIONS ===
 ▶  Running CreateUsersTable
    📋 History:
-      2026-10-12 - Pedro - Criou tabela users
+      2026-10-12 - Albertão - Criou tabela users
    ✔ Done
 
 === RODANDO DE NOVO (deve pular) ===
@@ -154,7 +134,7 @@ O `MigrationRunner` é inteligente — não roda o que já rodou:
    ✔ Rolled back
 ```
 
-O runner cria automaticamente a tabela `javel_migrations` no banco para controlar o histórico de execução:
+O runner cria automaticamente a tabela `javel_migrations` no banco:
 
 ```sql
 CREATE TABLE IF NOT EXISTS javel_migrations (
@@ -166,17 +146,7 @@ CREATE TABLE IF NOT EXISTS javel_migrations (
 
 Você não precisa criar essa tabela — ela é gerada automaticamente na primeira execução.
 
-## Bancos suportados
-
-| Banco | Suporte |
-| --- | --- |
-| H2 (in-memory) | ✅ |
-| MySQL | ✅ |
-| PostgreSQL | ✅ |
-| MariaDB | ✅ |
-
 ## Filosofia
-
 
 O `javel-migration` nasceu de uma pergunta simples:
 

@@ -27,7 +27,7 @@ public class MigrationCLI {
 
         switch (command) {
             case "migrate" -> {
-                System.out.println("\n=== RODANDO MIGRATIONS ===");
+                System.out.println("\n=== RODANDO MIGRATIONS | Aguarde ===");
                 runner.run();
             }
             case "rollback" -> {

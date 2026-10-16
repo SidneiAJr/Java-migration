@@ -1,4 +1,5 @@
 package com.javel;
+
 import javax.sql.DataSource;
 import java.sql.*;
 import java.util.*;
@@ -21,7 +22,7 @@ public class MigrationRunner {
             String version = migration.version();
 
             if (alreadyRan(version)) {
-                System.out.println("⏭  Skipping " + version);
+                System.out.println("Skipping " + version);
                 continue;
             }
 
@@ -29,7 +30,7 @@ public class MigrationRunner {
 
             History history = migration.history();
             if (!history.isEmpty()) {
-                System.out.println("   📋 History:");
+                System.out.println("History | Historico:");
                 history.getEntries().forEach(e -> System.out.println("      " + e));
             }
 
@@ -39,8 +40,9 @@ public class MigrationRunner {
 
             execute(schema.getSQL());
             record(version);
+            recordHistory(version, "up", schema.getOperations(), history);
 
-            System.out.println("   ✔ Done");
+            System.out.println("Done | Feito");
         }
     }
 
@@ -51,7 +53,7 @@ public class MigrationRunner {
 
         String last = getLastRan();
         if (last == null) {
-            System.out.println("⚠  Nada pra reverter.");
+            System.out.println("Nada pra reverter!");
             return;
         }
 
@@ -62,7 +64,7 @@ public class MigrationRunner {
 
         if (migration == null) return;
 
-        System.out.println("\n▶  Rolling back " + last);
+        System.out.println("\nRolling back " + last);
 
         Schema schema = new Schema();
         schema.setDialect(dialect);
@@ -70,11 +72,114 @@ public class MigrationRunner {
 
         execute(schema.getSQL());
         deleteRecord(last);
+        recordHistory(last, "rollback", schema.getOperations(), migration.history());
 
-        System.out.println("   ✔ Rolled back");
+        System.out.println("Rolled back");
     }
 
-    // ---- privados ----
+    // ── Tabelas de controle ───────────────────────────────────
+
+    private void ensureHistoryTable() throws SQLException {
+        // tabela de controle (o que já rodou)
+        execute("""
+            CREATE TABLE IF NOT EXISTS javel_migrations (
+              id           INT AUTO_INCREMENT PRIMARY KEY,
+              migration    VARCHAR(255) NOT NULL,
+              executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        // tabela de histórico rico
+        execute("""
+            CREATE TABLE IF NOT EXISTS javel_migration_history (
+              id              INT AUTO_INCREMENT PRIMARY KEY,
+              migration       VARCHAR(255) NOT NULL,
+              operacao        VARCHAR(10)  NOT NULL,
+              tabela          VARCHAR(255),
+              tipo_operacao   VARCHAR(30),
+              colunas         TEXT,
+              coluna_antiga   VARCHAR(255),
+              coluna_nova     VARCHAR(255),
+              executado_por   VARCHAR(255),
+              executado_em    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              entry           TEXT
+            );
+            """);
+    }
+
+    // ── Gravar histórico rico ─────────────────────────────────
+
+    private void recordHistory(
+            String version,
+            String operacao,
+            List<Schema.SchemaOperation> ops,
+            History history
+    ) throws SQLException {
+
+        String executadoPor = System.getProperty("user.name", "unknown");
+        String entries = history.isEmpty() ? null : String.join(" | ", history.getEntries());
+
+        String sql = """
+            INSERT INTO javel_migration_history
+              (migration, operacao, tabela, tipo_operacao, colunas, coluna_antiga, coluna_nova, executado_por, entry)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            if (ops.isEmpty()) {
+                // sem operações estruturadas — salva só o registro base
+                ps.setString(1, version);
+                ps.setString(2, operacao);
+                ps.setNull(3, Types.VARCHAR);
+                ps.setNull(4, Types.VARCHAR);
+                ps.setNull(5, Types.VARCHAR);
+                ps.setNull(6, Types.VARCHAR);
+                ps.setNull(7, Types.VARCHAR);
+                ps.setString(8, executadoPor);
+                ps.setString(9, entries);
+                ps.executeUpdate();
+                return;
+            }
+
+            for (Schema.SchemaOperation op : ops) {
+                ps.setString(1, version);
+                ps.setString(2, operacao);
+                ps.setString(3, op.tabela);
+                ps.setString(4, op.tipo.name());
+
+                switch (op.tipo) {
+                    case CREATE, ADD_COLUMN -> {
+                        ps.setString(5, String.join(", ", op.colunas));
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case DROP -> {
+                        ps.setNull(5, Types.VARCHAR);
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case DROP_COLUMN -> {
+                        ps.setString(5, String.join(", ", op.colunas));
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case RENAME_COLUMN -> {
+                        ps.setNull(5, Types.VARCHAR);
+                        ps.setString(6, op.colunaAntiga);
+                        ps.setString(7, op.colunaNova);
+                    }
+                }
+
+                ps.setString(8, executadoPor);
+                ps.setString(9, entries);
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    // ── Privados ──────────────────────────────────────────────
 
     private TableBuilder.Dialect detectDialect() throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
@@ -83,17 +188,6 @@ public class MigrationRunner {
             if (url.contains("postgresql")) return TableBuilder.Dialect.POSTGRESQL;
             return TableBuilder.Dialect.H2;
         }
-    }
-
-    private void ensureHistoryTable() throws SQLException {
-        String sql = """
-            CREATE TABLE IF NOT EXISTS javel_migrations (
-              id           INT AUTO_INCREMENT PRIMARY KEY,
-              migration    VARCHAR(255) NOT NULL,
-              executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            """;
-        execute(sql);
     }
 
     private boolean alreadyRan(String version) throws SQLException {
