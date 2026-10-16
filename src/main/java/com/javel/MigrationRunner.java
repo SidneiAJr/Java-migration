@@ -6,6 +6,11 @@ import java.util.*;
 
 public class MigrationRunner {
 
+    static {
+        System.setOut(new java.io.PrintStream(System.out, true, java.nio.charset.StandardCharsets.UTF_8));
+        System.setErr(new java.io.PrintStream(System.err, true, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private final DataSource dataSource;
     private final List<Migration> migrations;
 
@@ -22,15 +27,15 @@ public class MigrationRunner {
             String version = migration.version();
 
             if (alreadyRan(version)) {
-                System.out.println("Skipping " + version);
+                System.out.println("Skipping / Pulando: " + version);
                 continue;
             }
 
-            System.out.println("\n▶  Running " + version);
+            System.out.println("\nRunning / Rodando: " + version);
 
             History history = migration.history();
             if (!history.isEmpty()) {
-                System.out.println("History | Historico:");
+                System.out.println("   History / Historico:");
                 history.getEntries().forEach(e -> System.out.println("      " + e));
             }
 
@@ -38,11 +43,13 @@ public class MigrationRunner {
             schema.setDialect(dialect);
             migration.up(schema);
 
-            execute(schema.getSQL());
+            for (String sql : schema.getSQLs()) {
+                execute(sql);
+            }
             record(version);
             recordHistory(version, "up", schema.getOperations(), history);
 
-            System.out.println("Done | Feito");
+            System.out.println("   Done / Feito: " + version);
         }
     }
 
@@ -53,7 +60,7 @@ public class MigrationRunner {
 
         String last = getLastRan();
         if (last == null) {
-            System.out.println("Nada pra reverter!");
+            System.out.println("Nothing to rollback / Nada pra reverter!");
             return;
         }
 
@@ -64,23 +71,24 @@ public class MigrationRunner {
 
         if (migration == null) return;
 
-        System.out.println("\nRolling back " + last);
+        System.out.println("\nRolling back / Revertendo: " + last);
 
         Schema schema = new Schema();
         schema.setDialect(dialect);
         migration.down(schema);
 
-        execute(schema.getSQL());
+        for (String sql : schema.getSQLs()) {
+            execute(sql);
+        }
         deleteRecord(last);
         recordHistory(last, "rollback", schema.getOperations(), migration.history());
 
-        System.out.println("Rolled back");
+        System.out.println("Rolled back / Revertido: " + last);
     }
 
     // ── Tabelas de controle ───────────────────────────────────
 
     private void ensureHistoryTable() throws SQLException {
-        // tabela de controle (o que já rodou)
         execute("""
             CREATE TABLE IF NOT EXISTS javel_migrations (
               id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -89,7 +97,6 @@ public class MigrationRunner {
             );
             """);
 
-        // tabela de histórico rico
         execute("""
             CREATE TABLE IF NOT EXISTS javel_migration_history (
               id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -107,7 +114,7 @@ public class MigrationRunner {
             """);
     }
 
-    // ── Gravar histórico rico ─────────────────────────────────
+    // ── Gravar historico rico ─────────────────────────────────
 
     private void recordHistory(
             String version,
@@ -129,7 +136,6 @@ public class MigrationRunner {
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             if (ops.isEmpty()) {
-                // sem operações estruturadas — salva só o registro base
                 ps.setString(1, version);
                 ps.setString(2, operacao);
                 ps.setNull(3, Types.VARCHAR);
