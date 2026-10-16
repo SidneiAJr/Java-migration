@@ -1,6 +1,5 @@
 # javel-migration 🚀
 
-![license](https://img.shields.io/github/license/seu-usuario/javel-migration)
 ![java](https://img.shields.io/badge/java-%3E%3D17-orange)
 ![maven](https://img.shields.io/badge/maven-%3E%3D3.8-blue)
 ![version](https://img.shields.io/badge/version-0.0.1-brightgreen)
