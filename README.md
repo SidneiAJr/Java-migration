@@ -143,7 +143,7 @@ O `MigrationRunner` é inteligente — não roda o que já rodou:
 === RODANDO MIGRATIONS ===
 ▶  Running CreateUsersTable
    📋 History:
-      2026-10-12 - Pedro - Criou tabela users
+      2026-10-12 - Testador - Criou tabela users
    ✔ Done
 
 === RODANDO DE NOVO (deve pular) ===
