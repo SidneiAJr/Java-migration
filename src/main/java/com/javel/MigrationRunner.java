@@ -43,9 +43,22 @@ public class MigrationRunner {
             schema.setDialect(dialect);
             migration.up(schema);
 
-            for (String sql : schema.getSQLs()) {
-                execute(sql);
+            // conexão única por migration
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    for (String sql : schema.getSQLs()) {
+                        try (Statement st = conn.createStatement()) {
+                            st.execute(sql);
+                        }
+                    }
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                }
             }
+
             record(version);
             recordHistory(version, "up", schema.getOperations(), history);
 
@@ -77,9 +90,21 @@ public class MigrationRunner {
         schema.setDialect(dialect);
         migration.down(schema);
 
-        for (String sql : schema.getSQLs()) {
-            execute(sql);
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                for (String sql : schema.getSQLs()) {
+                    try (Statement st = conn.createStatement()) {
+                        st.execute(sql);
+                    }
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
         }
+
         deleteRecord(last);
         recordHistory(last, "rollback", schema.getOperations(), migration.history());
 
@@ -89,29 +114,31 @@ public class MigrationRunner {
     // ── Tabelas de controle ───────────────────────────────────
 
     private void ensureHistoryTable() throws SQLException {
-        execute("""
-            CREATE TABLE IF NOT EXISTS javel_migrations (
-              id           INT AUTO_INCREMENT PRIMARY KEY,
-              migration    VARCHAR(255) NOT NULL,
-              executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            """);
-
-        execute("""
-            CREATE TABLE IF NOT EXISTS javel_migration_history (
-              id              INT AUTO_INCREMENT PRIMARY KEY,
-              migration       VARCHAR(255) NOT NULL,
-              operacao        VARCHAR(10)  NOT NULL,
-              tabela          VARCHAR(255),
-              tipo_operacao   VARCHAR(30),
-              colunas         TEXT,
-              coluna_antiga   VARCHAR(255),
-              coluna_nova     VARCHAR(255),
-              executado_por   VARCHAR(255),
-              executado_em    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-              entry           TEXT
-            );
-            """);
+        try (Connection conn = dataSource.getConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS javel_migrations (
+                  id           INT AUTO_INCREMENT PRIMARY KEY,
+                  migration    VARCHAR(255) NOT NULL,
+                  executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """);
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS javel_migration_history (
+                  id              INT AUTO_INCREMENT PRIMARY KEY,
+                  migration       VARCHAR(255) NOT NULL,
+                  operacao        VARCHAR(10)  NOT NULL,
+                  tabela          VARCHAR(255),
+                  tipo_operacao   VARCHAR(30),
+                  colunas         TEXT,
+                  coluna_antiga   VARCHAR(255),
+                  coluna_nova     VARCHAR(255),
+                  executado_por   VARCHAR(255),
+                  executado_em    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  entry           TEXT
+                )
+                """);
+        }
     }
 
     // ── Gravar historico rico ─────────────────────────────────
@@ -161,7 +188,7 @@ public class MigrationRunner {
                         ps.setNull(6, Types.VARCHAR);
                         ps.setNull(7, Types.VARCHAR);
                     }
-                    case DROP -> {
+                    case DROP, RAW -> {
                         ps.setNull(5, Types.VARCHAR);
                         ps.setNull(6, Types.VARCHAR);
                         ps.setNull(7, Types.VARCHAR);
@@ -171,7 +198,7 @@ public class MigrationRunner {
                         ps.setNull(6, Types.VARCHAR);
                         ps.setNull(7, Types.VARCHAR);
                     }
-                    case RENAME_COLUMN -> {
+                    case RENAME_COLUMN, RENAME_TABLE -> {
                         ps.setNull(5, Types.VARCHAR);
                         ps.setString(6, op.colunaAntiga);
                         ps.setString(7, op.colunaNova);
@@ -230,13 +257,6 @@ public class MigrationRunner {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, version);
             ps.executeUpdate();
-        }
-    }
-
-    private void execute(String sql) throws SQLException {
-        try (Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement()) {
-            st.execute(sql);
         }
     }
 }

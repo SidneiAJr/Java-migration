@@ -27,21 +27,23 @@ public class MigrationCLI {
 
         switch (command) {
             case "migrate" -> {
-                System.out.println("\n=== RODANDO MIGRATIONS | Aguarde ===");
+                System.out.println("\n=== RODANDO MIGRATIONS / RUNNING MIGRATIONS ===");
                 runner.run();
             }
             case "rollback" -> {
                 System.out.println("\n=== ROLLBACK ===");
                 runner.rollback();
             }
-            default -> System.out.println("Comando desconhecido: " + command);
+            default -> System.out.println("Comando desconhecido / Unknown command: " + command);
         }
+
+        System.exit(0);
     }
 
     private static Properties loadProperties() throws IOException {
         Path path = Paths.get("src/main/resources/application.properties");
         if (!Files.exists(path)) {
-            throw new RuntimeException("application.properties não encontrado.");
+            throw new RuntimeException("application.properties nao encontrado / not found.");
         }
         Properties props = new Properties();
         props.load(new FileInputStream(path.toFile()));
@@ -61,7 +63,6 @@ public class MigrationCLI {
             return ds;
         }
 
-        // carrega o driver explicitamente
         if (url.contains("mysql")) {
             Class.forName("com.mysql.cj.jdbc.Driver");
         } else if (url.contains("postgresql")) {
@@ -75,7 +76,7 @@ public class MigrationCLI {
     private static List<Migration> scanMigrations() throws Exception {
         Path classesDir = Paths.get("target/classes");
         if (!Files.exists(classesDir)) {
-            throw new RuntimeException("target/classes não encontrado. Rode 'mvn compile' primeiro.");
+            throw new RuntimeException("target/classes nao encontrado. Rode 'mvn compile' primeiro / Run 'mvn compile' first.");
         }
 
         URLClassLoader classLoader = new URLClassLoader(
@@ -116,16 +117,12 @@ public class MigrationCLI {
             this.password = password;
         }
 
-        @Override
-        public Connection getConnection() throws SQLException {
+        @Override public Connection getConnection() throws SQLException {
             return DriverManager.getConnection(url, user, password);
         }
-
-        @Override
-        public Connection getConnection(String u, String p) throws SQLException {
+        @Override public Connection getConnection(String u, String p) throws SQLException {
             return DriverManager.getConnection(url, u, p);
         }
-
         @Override public PrintWriter getLogWriter() { return null; }
         @Override public void setLogWriter(PrintWriter pw) {}
         @Override public void setLoginTimeout(int seconds) {}

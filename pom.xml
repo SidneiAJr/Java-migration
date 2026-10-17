@@ -5,14 +5,41 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.javel</groupId>
-    <artifactId>javel-migration</artifactId>  <!-- era gambiarrajava -->
+    <artifactId>javel-migration</artifactId>
     <version>0.0.1</version>
     <packaging>jar</packaging>
+
+    <name>javel-migration</name>
+    <description>Laravel-style database migrations for Java. No SQL by hand, no YAML, no Flyway.</description>
+    <url>https://github.com/SidneiAJr/Java-migration</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>albertaodasmassa</id>
+            <name>sid</name>
+            <email>albertaodasmassa@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/SidneiAJr/Java-migration.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/SidneiAJr/Java-migration.git</developerConnection>
+        <url>https://github.com/SidneiAJr/Java-migration</url>
+    </scm>
 
     <properties>
         <java.version>17</java.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
 
     <dependencies>

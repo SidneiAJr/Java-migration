@@ -9,7 +9,8 @@ public class TableBuilder {
 
     private final String tableName;
     private final List<String> columns = new ArrayList<>();
-    private final List<String> columnNames = new ArrayList<>(); // novo
+    private final List<String> columnNames = new ArrayList<>();
+    private final List<String> indexes = new ArrayList<>();
     private final Dialect dialect;
 
     public TableBuilder(String tableName, Dialect dialect) {
@@ -20,6 +21,8 @@ public class TableBuilder {
     public TableBuilder(String tableName) {
         this(tableName, Dialect.H2);
     }
+
+    // ── Tipos de coluna ───────────────────────────────────────
 
     public TableBuilder id() {
         switch (dialect) {
@@ -33,6 +36,12 @@ public class TableBuilder {
 
     public TableBuilder string(String name) {
         columns.add(name + " VARCHAR(255) NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder string(String name, int length) {
+        columns.add(name + " VARCHAR(" + length + ") NOT NULL");
         columnNames.add(name);
         return this;
     }
@@ -67,6 +76,83 @@ public class TableBuilder {
         return this;
     }
 
+    public TableBuilder floatCol(String name) {
+        columns.add(name + " FLOAT NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder date(String name) {
+        columns.add(name + " DATE");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder time(String name) {
+        columns.add(name + " TIME");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder datetime(String name) {
+        columns.add(name + " DATETIME");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder json(String name) {
+        switch (dialect) {
+            case POSTGRESQL -> columns.add(name + " JSONB");
+            default         -> columns.add(name + " JSON");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder uuid(String name) {
+        switch (dialect) {
+            case POSTGRESQL -> columns.add(name + " UUID NOT NULL DEFAULT gen_random_uuid()");
+            default         -> columns.add(name + " CHAR(36) NOT NULL");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder enumCol(String name, String... values) {
+        String joined = "'" + String.join("', '", values) + "'";
+        switch (dialect) {
+            case MYSQL      -> columns.add(name + " ENUM(" + joined + ") NOT NULL");
+            case POSTGRESQL -> columns.add(name + " VARCHAR(50) NOT NULL CHECK (" + name + " IN (" + joined + "))");
+            default         -> columns.add(name + " VARCHAR(50) NOT NULL");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder foreign(String column, String referencedTable, String referencedColumn) {
+        columns.add(column + " BIGINT NOT NULL");
+        columnNames.add(column);
+        columns.add("CONSTRAINT fk_" + tableName + "_" + column
+                + " FOREIGN KEY (" + column + ")"
+                + " REFERENCES " + referencedTable + "(" + referencedColumn + ")"
+                + " ON DELETE CASCADE ON UPDATE CASCADE");
+        return this;
+    }
+
+    public TableBuilder timestamps() {
+        columns.add("created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        if (dialect == Dialect.MYSQL) {
+            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        } else {
+            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        }
+        columnNames.add("created_at");
+        columnNames.add("updated_at");
+        return this;
+    }
+
+    // ── Modificadores ─────────────────────────────────────────
+
     public TableBuilder nullable() {
         String last = columns.remove(columns.size() - 1);
         columns.add(last.replace(" NOT NULL", ""));
@@ -86,17 +172,39 @@ public class TableBuilder {
         return this;
     }
 
-    public TableBuilder timestamps() {
-        columns.add("created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    public TableBuilder unsigned() {
         if (dialect == Dialect.MYSQL) {
-            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
-        } else {
-            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+            String last = columns.remove(columns.size() - 1);
+            // insere UNSIGNED depois do tipo
+            columns.add(last.replaceFirst("(INT|BIGINT|FLOAT|DECIMAL[^)]*\\))", "$1 UNSIGNED"));
         }
-        columnNames.add("created_at");
-        columnNames.add("updated_at");
         return this;
     }
+
+    public TableBuilder comment(String text) {
+        if (dialect == Dialect.MYSQL) {
+            String last = columns.remove(columns.size() - 1);
+            columns.add(last + " COMMENT '" + text + "'");
+        }
+        return this;
+    }
+
+    public TableBuilder after(String column) {
+        if (dialect == Dialect.MYSQL) {
+            String last = columns.remove(columns.size() - 1);
+            columns.add(last + " AFTER " + column);
+        }
+        return this;
+    }
+
+    public TableBuilder index(String... cols) {
+        String name = "idx_" + tableName + "_" + String.join("_", cols);
+        String colList = String.join(", ", cols);
+        indexes.add("CREATE INDEX " + name + " ON " + tableName + "(" + colList + ");");
+        return this;
+    }
+
+    // ── Geração SQL ───────────────────────────────────────────
 
     public String toSQL() {
         return "CREATE TABLE " + tableName + " (\n  " +
@@ -104,6 +212,10 @@ public class TableBuilder {
                 "\n);";
     }
 
+    public List<String> getIndexSQL() {
+        return indexes;
+    }
+
     public String getTableName() { return tableName; }
-    public List<String> getColumnNames() { return columnNames; } // novo
+    public List<String> getColumnNames() { return columnNames; }
 }

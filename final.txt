@@ -1,0 +1,832 @@
+package com.javel;
+
+import java.util.List;
+
+public class History {
+
+    private final List<String> entries;
+
+    private History(List<String> entries) {
+        this.entries = entries;
+    }
+
+    public static History of(String... entries) {
+        return new History(List.of(entries));
+    }
+
+    public List<String> getEntries() {
+        return entries;
+    }
+
+    public boolean isEmpty() {
+        return entries.isEmpty();
+    }
+}package com.javel;
+
+public abstract class Migration {
+
+    public abstract void up(Schema schema);
+
+    public abstract void down(Schema schema);
+
+    public History history() {
+        return History.of(); // opcional — padrão vazio
+    }
+
+    public String version() {
+        // pega o nome da classe ex: V1__CreateUsersTable
+        return this.getClass().getSimpleName();
+    }
+}package com.javel;
+
+import org.h2.jdbcx.JdbcDataSource;
+
+import javax.sql.DataSource;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.lang.reflect.Modifier;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.*;
+import java.sql.*;
+import java.util.*;
+import java.util.logging.Logger;
+
+public class MigrationCLI {
+
+    public static void main(String[] args) throws Exception {
+        String command = args.length > 0 ? args[0] : "migrate";
+
+        Properties props = loadProperties();
+        DataSource ds = buildDataSource(props);
+        List<Migration> migrations = scanMigrations();
+
+        MigrationRunner runner = new MigrationRunner(ds, migrations);
+
+        switch (command) {
+            case "migrate" -> {
+                System.out.println("\n=== RODANDO MIGRATIONS / RUNNING MIGRATIONS ===");
+                runner.run();
+            }
+            case "rollback" -> {
+                System.out.println("\n=== ROLLBACK ===");
+                runner.rollback();
+            }
+            default -> System.out.println("Comando desconhecido / Unknown command: " + command);
+        }
+
+        System.exit(0);
+    }
+
+    private static Properties loadProperties() throws IOException {
+        Path path = Paths.get("src/main/resources/application.properties");
+        if (!Files.exists(path)) {
+            throw new RuntimeException("application.properties nao encontrado / not found.");
+        }
+        Properties props = new Properties();
+        props.load(new FileInputStream(path.toFile()));
+        return props;
+    }
+
+    private static DataSource buildDataSource(Properties props) throws Exception {
+        String url = props.getProperty("spring.datasource.url", "");
+        String user = props.getProperty("spring.datasource.username", "sa");
+        String password = props.getProperty("spring.datasource.password", "");
+
+        if (url.contains("h2")) {
+            JdbcDataSource ds = new JdbcDataSource();
+            ds.setURL(url);
+            ds.setUser(user);
+            ds.setPassword(password);
+            return ds;
+        }
+
+        if (url.contains("mysql")) {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } else if (url.contains("postgresql")) {
+            Class.forName("org.postgresql.Driver");
+        }
+
+        return new SimpleDataSource(url, user, password);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Migration> scanMigrations() throws Exception {
+        Path classesDir = Paths.get("target/classes");
+        if (!Files.exists(classesDir)) {
+            throw new RuntimeException("target/classes nao encontrado. Rode 'mvn compile' primeiro / Run 'mvn compile' first.");
+        }
+
+        URLClassLoader classLoader = new URLClassLoader(
+                new URL[]{ classesDir.toUri().toURL() },
+                MigrationCLI.class.getClassLoader()
+        );
+
+        List<Migration> migrations = new ArrayList<>();
+
+        Files.walk(classesDir)
+                .filter(p -> p.toString().endsWith(".class"))
+                .filter(p -> p.toString().contains("migration"))
+                .forEach(p -> {
+                    String relative = classesDir.relativize(p).toString();
+                    String className = relative
+                            .replace(FileSystems.getDefault().getSeparator(), ".")
+                            .replace(".class", "");
+
+                    try {
+                        Class<?> clazz = classLoader.loadClass(className);
+                        if (Migration.class.isAssignableFrom(clazz)
+                                && !Modifier.isAbstract(clazz.getModifiers())) {
+                            migrations.add((Migration) clazz.getDeclaredConstructor().newInstance());
+                        }
+                    } catch (Exception ignored) {}
+                });
+
+        migrations.sort(Comparator.comparing(m -> m.getClass().getSimpleName()));
+        return migrations;
+    }
+
+    static class SimpleDataSource implements DataSource {
+        private final String url, user, password;
+
+        SimpleDataSource(String url, String user, String password) {
+            this.url = url;
+            this.user = user;
+            this.password = password;
+        }
+
+        @Override public Connection getConnection() throws SQLException {
+            return DriverManager.getConnection(url, user, password);
+        }
+        @Override public Connection getConnection(String u, String p) throws SQLException {
+            return DriverManager.getConnection(url, u, p);
+        }
+        @Override public PrintWriter getLogWriter() { return null; }
+        @Override public void setLogWriter(PrintWriter pw) {}
+        @Override public void setLoginTimeout(int seconds) {}
+        @Override public int getLoginTimeout() { return 0; }
+        @Override public Logger getParentLogger() { return null; }
+        @Override public <T> T unwrap(Class<T> iface) { return null; }
+        @Override public boolean isWrapperFor(Class<?> iface) { return false; }
+    }
+}package com.javel;
+
+import javax.sql.DataSource;
+import java.sql.*;
+import java.util.*;
+
+public class MigrationRunner {
+
+    static {
+        System.setOut(new java.io.PrintStream(System.out, true, java.nio.charset.StandardCharsets.UTF_8));
+        System.setErr(new java.io.PrintStream(System.err, true, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private final DataSource dataSource;
+    private final List<Migration> migrations;
+
+    public MigrationRunner(DataSource dataSource, List<Migration> migrations) {
+        this.dataSource = dataSource;
+        this.migrations = migrations;
+    }
+
+    public void run() throws SQLException {
+        TableBuilder.Dialect dialect = detectDialect();
+        ensureHistoryTable();
+
+        for (Migration migration : migrations) {
+            String version = migration.version();
+
+            if (alreadyRan(version)) {
+                System.out.println("Skipping / Pulando: " + version);
+                continue;
+            }
+
+            System.out.println("\nRunning / Rodando: " + version);
+
+            History history = migration.history();
+            if (!history.isEmpty()) {
+                System.out.println("   History / Historico:");
+                history.getEntries().forEach(e -> System.out.println("      " + e));
+            }
+
+            Schema schema = new Schema();
+            schema.setDialect(dialect);
+            migration.up(schema);
+
+            // conexão única por migration
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    for (String sql : schema.getSQLs()) {
+                        try (Statement st = conn.createStatement()) {
+                            st.execute(sql);
+                        }
+                    }
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                }
+            }
+
+            record(version);
+            recordHistory(version, "up", schema.getOperations(), history);
+
+            System.out.println("   Done / Feito: " + version);
+        }
+    }
+
+    public void rollback() throws SQLException {
+        TableBuilder.Dialect dialect = detectDialect();
+
+        if (migrations.isEmpty()) return;
+
+        String last = getLastRan();
+        if (last == null) {
+            System.out.println("Nothing to rollback / Nada pra reverter!");
+            return;
+        }
+
+        Migration migration = migrations.stream()
+                .filter(m -> m.version().equals(last))
+                .findFirst()
+                .orElse(null);
+
+        if (migration == null) return;
+
+        System.out.println("\nRolling back / Revertendo: " + last);
+
+        Schema schema = new Schema();
+        schema.setDialect(dialect);
+        migration.down(schema);
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                for (String sql : schema.getSQLs()) {
+                    try (Statement st = conn.createStatement()) {
+                        st.execute(sql);
+                    }
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+
+        deleteRecord(last);
+        recordHistory(last, "rollback", schema.getOperations(), migration.history());
+
+        System.out.println("Rolled back / Revertido: " + last);
+    }
+
+    // ── Tabelas de controle ───────────────────────────────────
+
+    private void ensureHistoryTable() throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS javel_migrations (
+                  id           INT AUTO_INCREMENT PRIMARY KEY,
+                  migration    VARCHAR(255) NOT NULL,
+                  executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """);
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS javel_migration_history (
+                  id              INT AUTO_INCREMENT PRIMARY KEY,
+                  migration       VARCHAR(255) NOT NULL,
+                  operacao        VARCHAR(10)  NOT NULL,
+                  tabela          VARCHAR(255),
+                  tipo_operacao   VARCHAR(30),
+                  colunas         TEXT,
+                  coluna_antiga   VARCHAR(255),
+                  coluna_nova     VARCHAR(255),
+                  executado_por   VARCHAR(255),
+                  executado_em    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  entry           TEXT
+                )
+                """);
+        }
+    }
+
+    // ── Gravar historico rico ─────────────────────────────────
+
+    private void recordHistory(
+            String version,
+            String operacao,
+            List<Schema.SchemaOperation> ops,
+            History history
+    ) throws SQLException {
+
+        String executadoPor = System.getProperty("user.name", "unknown");
+        String entries = history.isEmpty() ? null : String.join(" | ", history.getEntries());
+
+        String sql = """
+            INSERT INTO javel_migration_history
+              (migration, operacao, tabela, tipo_operacao, colunas, coluna_antiga, coluna_nova, executado_por, entry)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            if (ops.isEmpty()) {
+                ps.setString(1, version);
+                ps.setString(2, operacao);
+                ps.setNull(3, Types.VARCHAR);
+                ps.setNull(4, Types.VARCHAR);
+                ps.setNull(5, Types.VARCHAR);
+                ps.setNull(6, Types.VARCHAR);
+                ps.setNull(7, Types.VARCHAR);
+                ps.setString(8, executadoPor);
+                ps.setString(9, entries);
+                ps.executeUpdate();
+                return;
+            }
+
+            for (Schema.SchemaOperation op : ops) {
+                ps.setString(1, version);
+                ps.setString(2, operacao);
+                ps.setString(3, op.tabela);
+                ps.setString(4, op.tipo.name());
+
+                switch (op.tipo) {
+                    case CREATE, ADD_COLUMN -> {
+                        ps.setString(5, String.join(", ", op.colunas));
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case DROP, RAW -> {
+                        ps.setNull(5, Types.VARCHAR);
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case DROP_COLUMN -> {
+                        ps.setString(5, String.join(", ", op.colunas));
+                        ps.setNull(6, Types.VARCHAR);
+                        ps.setNull(7, Types.VARCHAR);
+                    }
+                    case RENAME_COLUMN, RENAME_TABLE -> {
+                        ps.setNull(5, Types.VARCHAR);
+                        ps.setString(6, op.colunaAntiga);
+                        ps.setString(7, op.colunaNova);
+                    }
+                }
+
+                ps.setString(8, executadoPor);
+                ps.setString(9, entries);
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    // ── Privados ──────────────────────────────────────────────
+
+    private TableBuilder.Dialect detectDialect() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            String url = conn.getMetaData().getURL().toLowerCase();
+            if (url.contains("mysql"))      return TableBuilder.Dialect.MYSQL;
+            if (url.contains("postgresql")) return TableBuilder.Dialect.POSTGRESQL;
+            return TableBuilder.Dialect.H2;
+        }
+    }
+
+    private boolean alreadyRan(String version) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM javel_migrations WHERE migration = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, version);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() && rs.getInt(1) > 0;
+        }
+    }
+
+    private String getLastRan() throws SQLException {
+        String sql = "SELECT migration FROM javel_migrations ORDER BY id DESC LIMIT 1";
+        try (Connection conn = dataSource.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? rs.getString("migration") : null;
+        }
+    }
+
+    private void record(String version) throws SQLException {
+        String sql = "INSERT INTO javel_migrations (migration) VALUES (?)";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, version);
+            ps.executeUpdate();
+        }
+    }
+
+    private void deleteRecord(String version) throws SQLException {
+        String sql = "DELETE FROM javel_migrations WHERE migration = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, version);
+            ps.executeUpdate();
+        }
+    }
+}package com.javel;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
+
+public class Schema {
+
+    private final List<String> sqls = new ArrayList<>();
+    private final List<SchemaOperation> operations = new ArrayList<>();
+    private TableBuilder.Dialect dialect = TableBuilder.Dialect.H2;
+
+    public static class SchemaOperation {
+        public enum Tipo { CREATE, DROP, ADD_COLUMN, DROP_COLUMN, RENAME_COLUMN, RENAME_TABLE, RAW }
+
+        public Tipo tipo;
+        public String tabela;
+        public List<String> colunas = new ArrayList<>();
+        public String colunaAntiga;
+        public String colunaNova;
+    }
+
+    public void setDialect(TableBuilder.Dialect dialect) {
+        this.dialect = dialect;
+    }
+
+    public void create(String table, Consumer<TableBuilder> callback) {
+        TableBuilder builder = new TableBuilder(table, dialect);
+        callback.accept(builder);
+        sqls.add(builder.toSQL());
+        sqls.addAll(builder.getIndexSQL());
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.CREATE;
+        op.tabela = table;
+        op.colunas = new ArrayList<>(builder.getColumnNames());
+        operations.add(op);
+    }
+
+    public void drop(String table) {
+        sqls.add("DROP TABLE IF EXISTS " + table + ";");
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.DROP;
+        op.tabela = table;
+        operations.add(op);
+    }
+
+    public void addColumn(String table, Consumer<TableBuilder> callback) {
+        TableBuilder builder = new TableBuilder(table, dialect);
+        callback.accept(builder);
+        String colSQL = builder.toSQL()
+                .replaceAll("CREATE TABLE .*?\\(\n  ", "")
+                .replaceAll("\n\\);", "");
+        sqls.add("ALTER TABLE " + table + " ADD COLUMN " + colSQL + ";");
+        sqls.addAll(builder.getIndexSQL());
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.ADD_COLUMN;
+        op.tabela = table;
+        op.colunas = new ArrayList<>(builder.getColumnNames());
+        operations.add(op);
+    }
+
+    public void dropColumn(String table, String column) {
+        sqls.add("ALTER TABLE " + table + " DROP COLUMN " + column + ";");
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.DROP_COLUMN;
+        op.tabela = table;
+        op.colunas = List.of(column);
+        operations.add(op);
+    }
+
+    public void renameColumn(String table, String from, String to) {
+        sqls.add("ALTER TABLE " + table + " RENAME COLUMN " + from + " TO " + to + ";");
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.RENAME_COLUMN;
+        op.tabela = table;
+        op.colunaAntiga = from;
+        op.colunaNova = to;
+        operations.add(op);
+    }
+
+    public void renameTable(String from, String to) {
+        switch (dialect) {
+            case MYSQL -> sqls.add("RENAME TABLE " + from + " TO " + to + ";");
+            default    -> sqls.add("ALTER TABLE " + from + " RENAME TO " + to + ";");
+        }
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.RENAME_TABLE;
+        op.tabela = from;
+        op.colunaNova = to;
+        operations.add(op);
+    }
+
+    public void raw(String sql) {
+        sqls.add(sql);
+
+        SchemaOperation op = new SchemaOperation();
+        op.tipo = SchemaOperation.Tipo.RAW;
+        op.tabela = "raw";
+        operations.add(op);
+    }
+
+    public List<String> getSQLs() { return sqls; }
+    public List<SchemaOperation> getOperations() { return operations; }
+}package com.javel;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class TableBuilder {
+
+    public enum Dialect { H2, MYSQL, POSTGRESQL }
+
+    private final String tableName;
+    private final List<String> columns = new ArrayList<>();
+    private final List<String> columnNames = new ArrayList<>();
+    private final List<String> indexes = new ArrayList<>();
+    private final Dialect dialect;
+
+    public TableBuilder(String tableName, Dialect dialect) {
+        this.tableName = tableName;
+        this.dialect = dialect;
+    }
+
+    public TableBuilder(String tableName) {
+        this(tableName, Dialect.H2);
+    }
+
+    // ── Tipos de coluna ───────────────────────────────────────
+
+    public TableBuilder id() {
+        switch (dialect) {
+            case MYSQL      -> columns.add("id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY");
+            case POSTGRESQL -> columns.add("id BIGSERIAL PRIMARY KEY");
+            default         -> columns.add("id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
+        }
+        columnNames.add("id");
+        return this;
+    }
+
+    public TableBuilder string(String name) {
+        columns.add(name + " VARCHAR(255) NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder string(String name, int length) {
+        columns.add(name + " VARCHAR(" + length + ") NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder text(String name) {
+        columns.add(name + " TEXT");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder integer(String name) {
+        columns.add(name + " INT NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder bigInteger(String name) {
+        columns.add(name + " BIGINT NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder bool(String name) {
+        columns.add(name + " BOOLEAN NOT NULL DEFAULT FALSE");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder decimal(String name, int precision, int scale) {
+        columns.add(name + " DECIMAL(" + precision + "," + scale + ") NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder floatCol(String name) {
+        columns.add(name + " FLOAT NOT NULL");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder date(String name) {
+        columns.add(name + " DATE");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder time(String name) {
+        columns.add(name + " TIME");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder datetime(String name) {
+        columns.add(name + " DATETIME");
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder json(String name) {
+        switch (dialect) {
+            case POSTGRESQL -> columns.add(name + " JSONB");
+            default         -> columns.add(name + " JSON");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder uuid(String name) {
+        switch (dialect) {
+            case POSTGRESQL -> columns.add(name + " UUID NOT NULL DEFAULT gen_random_uuid()");
+            default         -> columns.add(name + " CHAR(36) NOT NULL");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder enumCol(String name, String... values) {
+        String joined = "'" + String.join("', '", values) + "'";
+        switch (dialect) {
+            case MYSQL      -> columns.add(name + " ENUM(" + joined + ") NOT NULL");
+            case POSTGRESQL -> columns.add(name + " VARCHAR(50) NOT NULL CHECK (" + name + " IN (" + joined + "))");
+            default         -> columns.add(name + " VARCHAR(50) NOT NULL");
+        }
+        columnNames.add(name);
+        return this;
+    }
+
+    public TableBuilder foreign(String column, String referencedTable, String referencedColumn) {
+        columns.add(column + " BIGINT NOT NULL");
+        columnNames.add(column);
+        columns.add("CONSTRAINT fk_" + tableName + "_" + column
+                + " FOREIGN KEY (" + column + ")"
+                + " REFERENCES " + referencedTable + "(" + referencedColumn + ")"
+                + " ON DELETE CASCADE ON UPDATE CASCADE");
+        return this;
+    }
+
+    public TableBuilder timestamps() {
+        columns.add("created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        if (dialect == Dialect.MYSQL) {
+            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        } else {
+            columns.add("updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        }
+        columnNames.add("created_at");
+        columnNames.add("updated_at");
+        return this;
+    }
+
+    // ── Modificadores ─────────────────────────────────────────
+
+    public TableBuilder nullable() {
+        String last = columns.remove(columns.size() - 1);
+        columns.add(last.replace(" NOT NULL", ""));
+        return this;
+    }
+
+    public TableBuilder unique() {
+        String last = columns.remove(columns.size() - 1);
+        columns.add(last + " UNIQUE");
+        return this;
+    }
+
+    public TableBuilder defaultValue(String value) {
+        String last = columns.remove(columns.size() - 1);
+        String cleaned = last.replaceAll("DEFAULT \\S+", "").trim();
+        columns.add(cleaned + " DEFAULT " + value);
+        return this;
+    }
+
+    public TableBuilder unsigned() {
+        if (dialect == Dialect.MYSQL) {
+            String last = columns.remove(columns.size() - 1);
+            // insere UNSIGNED depois do tipo
+            columns.add(last.replaceFirst("(INT|BIGINT|FLOAT|DECIMAL[^)]*\\))", "$1 UNSIGNED"));
+        }
+        return this;
+    }
+
+    public TableBuilder comment(String text) {
+        if (dialect == Dialect.MYSQL) {
+            String last = columns.remove(columns.size() - 1);
+            columns.add(last + " COMMENT '" + text + "'");
+        }
+        return this;
+    }
+
+    public TableBuilder after(String column) {
+        if (dialect == Dialect.MYSQL) {
+            String last = columns.remove(columns.size() - 1);
+            columns.add(last + " AFTER " + column);
+        }
+        return this;
+    }
+
+    public TableBuilder index(String... cols) {
+        String name = "idx_" + tableName + "_" + String.join("_", cols);
+        String colList = String.join(", ", cols);
+        indexes.add("CREATE INDEX " + name + " ON " + tableName + "(" + colList + ");");
+        return this;
+    }
+
+    // ── Geração SQL ───────────────────────────────────────────
+
+    public String toSQL() {
+        return "CREATE TABLE " + tableName + " (\n  " +
+                String.join(",\n  ", columns) +
+                "\n);";
+    }
+
+    public List<String> getIndexSQL() {
+        return indexes;
+    }
+
+    public String getTableName() { return tableName; }
+    public List<String> getColumnNames() { return columnNames; }
+}<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.javel</groupId>
+    <artifactId>javel-migration</artifactId>
+    <version>0.0.1</version>
+    <packaging>jar</packaging>
+
+    <name>javel-migration</name>
+    <description>Laravel-style database migrations for Java. No SQL by hand, no YAML, no Flyway.</description>
+    <url>https://github.com/seu-usuario/javel-migration</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>albertaodasmassa</id>
+            <name>sid</name>
+            <email>albertaodasmassa@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/seu-usuario/javel-migration.git</connection>
+        <developerConnection>scm:git:ssh://github.com/seu-usuario/javel-migration.git</developerConnection>
+        <url>https://github.com/seu-usuario/javel-migration</url>
+    </scm>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+
+    <dependencies>
+
+        <!-- H2 -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.2.224</version>
+        </dependency>
+
+        <!-- MySQL -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.3.0</version>
+        </dependency>
+
+        <!-- PostgreSQL -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.3</version>
+        </dependency>
+
+    </dependencies>
+
+</project>
