@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.javel</groupId>
+    <groupId>io.github.sidneiajr</groupId>
     <artifactId>javel-migration</artifactId>
     <version>0.0.1</version>
     <packaging>jar</packaging>
@@ -21,12 +21,12 @@
     </licenses>
 
     <developers>
-        <developer>
-            <id>albertaodasmassa</id>
-            <name>sid</name>
-            <email>albertaodasmassa@gmail.com</email>
-        </developer>
-    </developers>
+    <developer>
+        <id>javel</id>
+        <name>Javel</name>
+        <email>javel@example.com</email>
+    </developer>
+</developers>
 
     <scm>
         <connection>scm:git:https://github.com/SidneiAJr/Java-migration.git</connection>
@@ -43,7 +43,6 @@
     </properties>
 
     <dependencies>
-
         <!-- H2 -->
         <dependency>
             <groupId>com.h2database</groupId>
@@ -64,7 +63,63 @@
             <artifactId>postgresql</artifactId>
             <version>42.7.3</version>
         </dependency>
-
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Gera o sources.jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals><goal>jar-no-fork</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Gera o javadoc.jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals><goal>jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Assina com GPG -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals><goal>sign</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Publica no Maven Central -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.4.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <tokenAuth>true</tokenAuth>
+                    <autoPublish>true</autoPublish>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
 </project>
